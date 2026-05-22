@@ -1,7 +1,9 @@
 # Changelog
 
 ## 0.2.5
-- Fixed static checks for GitHub Workflows
+- Fixed GitHub Actions static checks.
+- Updated workflow checkout action to avoid Node.js 20 deprecation warnings.
+- Resolved ShellCheck findings in `install.sh` and `verify.sh`.
 
 ## 0.2.4
 
