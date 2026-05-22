@@ -1,7 +1,15 @@
 # Changelog
 
+## 0.3.0
+- Made the installer self-contained.
+- Removed dependency on downloading or successfully configuring the upstream `rockpi-penta` package.
+- Added bundled minimal `main.py`, `misc.py`, and systemd service unit.
+- Installed fonts from the system package instead of relying on upstream package contents.
+
 ## 0.2.7
-- Fix installer extlinux validation
+- Fixed Cubie A7A board detection using `/proc/device-tree/compatible`.
+- Fixed installer preflight extlinux validation.
+- Fixed temporary overlay compile cleanup during `install.sh --check`.
 
 ## 0.2.6
 - Fixed Cubie A7A board detection by checking `/proc/device-tree/compatible` for `radxa,cubie-a7a`.

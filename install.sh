@@ -40,6 +40,7 @@ run() {
     printf ' %q' "$@"
     printf '\n'
   fi
+
   if [[ "$DRY_RUN" -eq 0 ]]; then
     "$@"
   fi
@@ -100,6 +101,7 @@ check_arch_and_board() {
 }
 
 check_overlay_sources() {
+  local f
   for f in "${OVERLAY_SOURCES[@]}"; do
     require_file "$f"
   done
@@ -122,20 +124,28 @@ if not any(line.strip().startswith(("fdtoverlays", "fdtdir")) for line in text.s
 PY_EXTLINUX
 }
 
-check_python_files() {
+check_repo_files() {
+  require_file "$ROOT_DIR/files/main.py"
+  require_file "$ROOT_DIR/files/misc.py"
   require_file "$ROOT_DIR/files/fan.py"
   require_file "$ROOT_DIR/files/oled.py"
-  python3 -m py_compile "$ROOT_DIR/files/fan.py" "$ROOT_DIR/files/oled.py"
+  require_file "$ROOT_DIR/files/rockpi-penta.service"
+
+  python3 -m py_compile \
+    "$ROOT_DIR/files/main.py" \
+    "$ROOT_DIR/files/misc.py" \
+    "$ROOT_DIR/files/fan.py" \
+    "$ROOT_DIR/files/oled.py"
 }
 
 check_dtc_compile() {
-  local tmp
+  local tmp src out
+
   command_exists dtc || return 0
 
   tmp="$(mktemp -d)"
 
   for src in "${OVERLAY_SOURCES[@]}"; do
-    local out
     out="$tmp/$(basename "$src" .dts).dtbo"
     if ! dtc -@ -I dts -O dtb -o "$out" "$src"; then
       rm -rf "$tmp"
@@ -146,28 +156,34 @@ check_dtc_compile() {
   rm -rf "$tmp"
 }
 
-
 preflight() {
   log "Running prerequisite checks"
-  require_file "$ROOT_DIR/files/fan.py"
-  require_file "$ROOT_DIR/files/oled.py"
   check_overlay_sources
   validate_extlinux
   check_arch_and_board
-  check_python_files
+  check_repo_files
   check_dtc_compile
   log "Preflight checks passed"
 }
 
+pip_module_available() {
+  local module="$1"
+  python3 - <<PY >/dev/null 2>&1
+import importlib
+importlib.import_module("${module}")
+PY
+}
+
 pip_install() {
   local pkg="$1"
-  local module="${2:-${pkg//-/_}}"
+  local module="$2"
 
-  if python3 - <<PY >/dev/null 2>&1
-import importlib
-importlib.import_module('${module}')
-PY
-  then
+  if pip_module_available "$module"; then
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    log "Would install Python package: $pkg"
     return 0
   fi
 
@@ -176,89 +192,23 @@ PY
     || python3 -m pip install --upgrade "$pkg" >/dev/null
 }
 
-pip_install_requirements() {
-  local req="$1"
-  [[ -f "$req" ]] || return 0
-
-  log "Installing upstream Python requirements from $req"
-  python3 -m pip install -r "$req" --break-system-packages >/dev/null 2>&1 \
-    || python3 -m pip install -r "$req" >/dev/null
-}
-
-validate_deb_if_requested() {
-  local deb="$1"
-  local expected_sha="${ROCKPI_PENTA_DEB_SHA256:-}"
-
-  if [[ -n "$expected_sha" ]]; then
-    local actual
-    actual="$(sha256sum "$deb" | awk '{print $1}')"
-    [[ "$actual" == "$expected_sha" ]] || die "SHA256 mismatch for $deb: expected $expected_sha, got $actual"
-  else
-    warn "ROCKPI_PENTA_DEB_SHA256 not set; validating package metadata/contents instead of checksum."
-  fi
-
-  [[ "$(dpkg-deb -f "$deb" Package)" == "rockpi-penta" ]] || die "Downloaded .deb is not package rockpi-penta"
-  dpkg-deb -c "$deb" | grep -q '/usr/bin/rockpi-penta/main.py$' || die "rockpi-penta .deb does not contain main.py"
-  dpkg-deb -c "$deb" | grep -q '/usr/bin/rockpi-penta/misc.py$' || die "rockpi-penta .deb does not contain misc.py"
-}
-
-ensure_rockpi_penta_base() {
-  if [[ -f "$BASE_DIR/main.py" && -f "$BASE_DIR/misc.py" ]]; then
-    log "Found existing rockpi-penta base files in $BASE_DIR"
-    return 0
-  fi
-
-  log "rockpi-penta base files are missing. Downloading and extracting upstream package without running postinst."
-
-  local tmp deb
-  tmp="$(mktemp -d)"
-  (
-    cd "$tmp"
-    if ! apt-get download rockpi-penta >/dev/null; then
-      cat >&2 <<'MSG'
-Could not download the upstream rockpi-penta package.
-
-This patch intentionally does not require running the official package postinst,
-because the upstream package may reject the Cubie A7A as unsupported. However,
-it still needs the upstream base files (main.py, misc.py, fonts, service unit).
-
-Options:
-  1. Enable the repository that provides rockpi-penta and rerun this installer.
-  2. Manually place/extract the upstream rockpi-penta files into /usr/bin/rockpi-penta.
-  3. If you already have a rockpi-penta .deb, extract it with:
-       sudo dpkg-deb -x rockpi-penta_*.deb /
-     Then rerun this installer.
-MSG
-      exit 1
-    fi
-
-    deb="$(find . -maxdepth 1 -type f -name 'rockpi-penta_*.deb' -printf '%f\n' | sort | head -n1)"
-    [[ -n "$deb" ]] || die "Downloaded rockpi-penta package not found"
-    validate_deb_if_requested "$deb"
-    run dpkg-deb -x "$deb" /
-  )
-  rm -rf "$tmp"
-
-  require_file "$BASE_DIR/main.py"
-  require_file "$BASE_DIR/misc.py"
-}
-
 update_extlinux() {
-  python3 - <<'PY'
+  python3 - <<'PY_UPDATE_EXTLINUX'
 from pathlib import Path
 
-path = Path('/boot/extlinux/extlinux.conf')
-text = path.read_text(encoding='utf-8')
+path = Path("/boot/extlinux/extlinux.conf")
+text = path.read_text(encoding="utf-8")
 needed = [
-    '/boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo',
-    '/boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo',
+    "/boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo",
+    "/boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo",
 ]
+
 lines = text.splitlines()
 changed = False
 
 for i, line in enumerate(lines):
     stripped = line.strip()
-    if stripped.startswith('fdtoverlays'):
+    if stripped.startswith("fdtoverlays"):
         prefix = line[:len(line) - len(line.lstrip())]
         parts = stripped.split()
         overlays = parts[1:]
@@ -266,61 +216,82 @@ for i, line in enumerate(lines):
             if item not in overlays:
                 overlays.append(item)
                 changed = True
-        lines[i] = prefix + 'fdtoverlays ' + ' '.join(overlays)
+        lines[i] = prefix + "fdtoverlays " + " ".join(overlays)
         break
 else:
     for i, line in enumerate(lines):
-        if line.strip().startswith('fdtdir'):
+        if line.strip().startswith("fdtdir"):
             indent = line[:len(line) - len(line.lstrip())]
-            lines.insert(i + 1, indent + 'fdtoverlays ' + ' '.join(needed))
+            lines.insert(i + 1, indent + "fdtoverlays " + " ".join(needed))
             changed = True
             break
     else:
-        raise SystemExit('Could not find fdtdir/fdtoverlays in extlinux.conf')
+        raise SystemExit("Could not find fdtdir/fdtoverlays in extlinux.conf")
 
 if changed:
-    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-PY
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY_UPDATE_EXTLINUX
 }
 
 update_env() {
-  python3 - <<'PY'
+  python3 - <<'PY_UPDATE_ENV'
 from pathlib import Path
-path = Path('/etc/rockpi-penta.env')
-lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+
+path = Path("/etc/rockpi-penta.env")
+lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
 values = {
-    'HARDWARE_PWM': '1',
-    'PWMCHIP': '20',
-    'PWM_CHANNEL': '4',
-    'PWM_POLARITY': 'inversed',
-    'PWM_PERIOD_US': '40',
-    'I2C_BUS': '7',
-    'OLED_ADDR': '0x3c',
-    'OLED_WIDTH': '128',
-    'OLED_HEIGHT': '32',
-    'BUTTON_CHIP': '0',
-    'BUTTON_LINE': '33',
+    "HARDWARE_PWM": "1",
+    "PWMCHIP": "20",
+    "PWM_CHANNEL": "4",
+    "PWM_POLARITY": "inversed",
+    "PWM_PERIOD_US": "40",
+    "I2C_BUS": "7",
+    "OLED_ADDR": "0x3c",
+    "OLED_WIDTH": "128",
+    "OLED_HEIGHT": "32",
+    "BUTTON_CHIP": "0",
+    "BUTTON_LINE": "33",
 }
+
 seen = set()
 out = []
+
 for line in lines:
-    if '=' in line and not line.lstrip().startswith('#'):
-        key = line.split('=', 1)[0].strip()
+    if "=" in line and not line.lstrip().startswith("#"):
+        key = line.split("=", 1)[0].strip()
         if key in values:
-            out.append(f'{key}={values[key]}')
+            out.append(f"{key}={values[key]}")
             seen.add(key)
             continue
     out.append(line)
 
 if out and out[-1].strip():
-    out.append('')
-out.append('# Cubie A7A + Penta SATA HAT patch')
+    out.append("")
+
+out.append("# Cubie A7A + Penta SATA HAT patch")
 for key, value in values.items():
     if key not in seen:
-        out.append(f'{key}={value}')
-path.write_text('\n'.join(out).rstrip() + '\n', encoding='utf-8')
-PY
+        out.append(f"{key}={value}")
+
+path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+PY_UPDATE_ENV
+}
+
+install_fonts() {
+  run mkdir -p "$BASE_DIR/fonts"
+
+  if [[ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]]; then
+    run ln -sf /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf "$BASE_DIR/fonts/DejaVuSansMono.ttf"
+  else
+    die "DejaVuSansMono.ttf not found. Install fonts-dejavu-core."
+  fi
+
+  if [[ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf ]]; then
+    run ln -sf /usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf "$BASE_DIR/fonts/DejaVuSansMono-Bold.ttf"
+  else
+    die "DejaVuSansMono-Bold.ttf not found. Install fonts-dejavu-core."
+  fi
 }
 
 if [[ "$CHECK_ONLY" -eq 1 || "$DRY_RUN" -eq 1 ]]; then
@@ -335,44 +306,55 @@ preflight
 
 log "Installing OS dependencies"
 run apt-get update
-run apt-get install -y device-tree-compiler i2c-tools gpiod python3-pip
-
-ensure_rockpi_penta_base
-require_file "$BASE_DIR/main.py"
-require_file "$BASE_DIR/misc.py"
-require_file "$BASE_DIR/fan.py"
-require_file "$BASE_DIR/oled.py"
+run apt-get install -y \
+  device-tree-compiler \
+  i2c-tools \
+  gpiod \
+  python3-pip \
+  python3-pil \
+  python3-libgpiod \
+  fonts-dejavu-core
 
 log "Creating backups in $BACKUP_DIR"
-run mkdir -p "$BACKUP_DIR" /boot/dtbo
+run mkdir -p "$BACKUP_DIR" /boot/dtbo "$BASE_DIR"
 run cp -a "$EXTLINUX" "$BACKUP_DIR/extlinux.conf"
+
 if [[ -e /etc/rockpi-penta.env ]]; then
   run cp -a /etc/rockpi-penta.env "$BACKUP_DIR/rockpi-penta.env"
 fi
 
-if [[ -e "$BASE_DIR/fan.py" ]]; then
-  run cp -a "$BASE_DIR/fan.py" "$BACKUP_DIR/fan.py"
+if [[ -e /etc/rockpi-penta.conf ]]; then
+  run cp -a /etc/rockpi-penta.conf "$BACKUP_DIR/rockpi-penta.conf"
 fi
 
-if [[ -e "$BASE_DIR/oled.py" ]]; then
-  run cp -a "$BASE_DIR/oled.py" "$BACKUP_DIR/oled.py"
+if [[ -d "$BASE_DIR" ]]; then
+  run cp -a "$BASE_DIR" "$BACKUP_DIR/rockpi-penta"
 fi
 
-pip_install_requirements "$BASE_DIR/requirements.txt"
+if [[ -e /lib/systemd/system/rockpi-penta.service ]]; then
+  run cp -a /lib/systemd/system/rockpi-penta.service "$BACKUP_DIR/rockpi-penta.service"
+fi
+
+pip_install adafruit-circuitpython-ssd1306 adafruit_ssd1306
 pip_install adafruit-extended-bus adafruit_extended_bus
 
 log "Building and installing device-tree overlays"
 run dtc -@ -I dts -O dtb -o /boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo "$ROOT_DIR/overlays/cubie-a7a-spwm0-4-pin13.dts"
 run dtc -@ -I dts -O dtb -o /boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo "$ROOT_DIR/overlays/cubie-a7a-twi7-pin3-5.dts"
 
+log "Installing self-contained rockpi-penta service files"
+run mkdir -p "$BASE_DIR"
+run install -m 0755 "$ROOT_DIR/files/main.py" "$BASE_DIR/main.py"
+run install -m 0644 "$ROOT_DIR/files/misc.py" "$BASE_DIR/misc.py"
+run install -m 0755 "$ROOT_DIR/files/fan.py" "$BASE_DIR/fan.py"
+run install -m 0755 "$ROOT_DIR/files/oled.py" "$BASE_DIR/oled.py"
+run install -m 0644 "$ROOT_DIR/files/rockpi-penta.service" /lib/systemd/system/rockpi-penta.service
+install_fonts
+
 log "Updating extlinux overlays"
 if [[ "$DRY_RUN" -eq 0 ]]; then
   update_extlinux
 fi
-
-log "Installing patched rockpi-penta files"
-run install -m 0755 "$ROOT_DIR/files/fan.py" "$BASE_DIR/fan.py"
-run install -m 0755 "$ROOT_DIR/files/oled.py" "$BASE_DIR/oled.py"
 
 log "Updating /etc/rockpi-penta.env"
 if [[ "$DRY_RUN" -eq 0 ]]; then
@@ -380,10 +362,10 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
 fi
 
 if [[ "$DRY_RUN" -eq 0 ]]; then
-  python3 -m py_compile "$BASE_DIR/fan.py" "$BASE_DIR/oled.py"
+  python3 -m py_compile "$BASE_DIR/main.py" "$BASE_DIR/misc.py" "$BASE_DIR/fan.py" "$BASE_DIR/oled.py"
   systemctl daemon-reload
-  systemctl enable rockpi-penta.service >/dev/null || true
-  systemctl restart rockpi-penta.service || true
+  systemctl enable rockpi-penta.service >/dev/null
+  systemctl restart rockpi-penta.service
 fi
 
 cat <<MSG

@@ -1,0 +1,14 @@
+[Unit]
+Description=Rockpi SATA Hat
+After=multi-user.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/rockpi-penta.env
+WorkingDirectory=/usr/bin/rockpi-penta
+ExecStart=/usr/bin/python3 /usr/bin/rockpi-penta/main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
