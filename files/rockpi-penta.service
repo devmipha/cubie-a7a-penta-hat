@@ -1,6 +1,7 @@
 [Unit]
 Description=Rockpi SATA Hat
-After=multi-user.target
+After=local-fs.target
+Before=multi-user.target
 
 [Service]
 Type=simple

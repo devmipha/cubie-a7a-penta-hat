@@ -5,6 +5,7 @@
 - Removed dependency on downloading or successfully configuring the upstream `rockpi-penta` package.
 - Added bundled minimal `main.py`, `misc.py`, and systemd service unit.
 - Installed fonts from the system package instead of relying on upstream package contents.
+- Fixed systemd unit ordering so the service starts promptly during boot.
 
 ## 0.2.7
 - Fixed Cubie A7A board detection using `/proc/device-tree/compatible`.
