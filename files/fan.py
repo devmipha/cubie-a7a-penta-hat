@@ -155,6 +155,34 @@ def get_cached_drive_temps() -> list[float]:
     return _drive_cache
 
 
+def wait_for_drive_temps() -> None:
+    """Wait briefly for drivetemp hwmon sensors after early boot.
+
+    The service starts very early. SATA drives and the drivetemp hwmon device may
+    appear a few seconds later, so do a bounded wait before entering the main loop.
+    """
+    if not env_bool("FAN_DRIVE_ENABLE", True):
+        return
+
+    timeout = max(0, env_int("FAN_DRIVE_STARTUP_WAIT", 15))
+    if timeout <= 0:
+        return
+
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        temps = get_drive_temps_hwmon()
+        if temps:
+            global _drive_cache_ts, _drive_cache
+            _drive_cache = temps
+            _drive_cache_ts = time.monotonic()
+            logging.info("detected %d drive temperature sensor(s), hottest %.1fC", len(temps), max(temps))
+            return
+        time.sleep(1)
+
+    logging.info("no drive temperature sensor detected during startup wait; continuing with CPU-only fan control")
+
+
 def temp_to_speed(temp_c: float, prefix: str) -> int:
     lv0 = env_int(f"{prefix}_LV0", 35)
     lv1 = env_int(f"{prefix}_LV1", 45)
@@ -186,6 +214,7 @@ def choose_fan_speed(cpu_temp: float | None, drive_temps: list[float]) -> int:
 
 def running() -> None:
     pwm = Pwm()
+    wait_for_drive_temps()
     interval = max(1, env_int("FAN_INTERVAL", 2))
     last_speed: int | None = None
 

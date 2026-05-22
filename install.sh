@@ -256,6 +256,7 @@ values = {
     "FAN_CPU_ENABLE": "1",
     "FAN_DRIVE_ENABLE": "1",
     "FAN_DRIVE_INTERVAL": "10",
+    "FAN_DRIVE_STARTUP_WAIT": "15",
     "FAN_CPU_LV0": "35",
     "FAN_CPU_LV1": "45",
     "FAN_CPU_LV2": "60",

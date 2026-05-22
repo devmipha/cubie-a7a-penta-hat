@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.3.1
+- Added bounded startup wait so early-boot fan control can detect `drivetemp` sensors.
 - Added automatic fan control based on the hottest SATA drive temperature via the kernel `drivetemp` hwmon driver.
 - Fan speed now follows the maximum cooling request from CPU and drive temperature thresholds.
 - Installer now enables `drivetemp` at boot.
