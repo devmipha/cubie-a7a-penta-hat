@@ -131,16 +131,21 @@ check_python_files() {
 check_dtc_compile() {
   local tmp
   command_exists dtc || return 0
+
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+
   for src in "${OVERLAY_SOURCES[@]}"; do
     local out
     out="$tmp/$(basename "$src" .dts).dtbo"
     if ! dtc -@ -I dts -O dtb -o "$out" "$src"; then
+      rm -rf "$tmp"
       die "Device-tree overlay failed to compile: $src"
     fi
   done
+
+  rm -rf "$tmp"
 }
+
 
 preflight() {
   log "Running prerequisite checks"
