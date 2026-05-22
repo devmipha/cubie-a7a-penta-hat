@@ -16,10 +16,6 @@ OVERLAY_SOURCES=(
   "$ROOT_DIR/overlays/cubie-a7a-spwm0-4-pin13.dts"
   "$ROOT_DIR/overlays/cubie-a7a-twi7-pin3-5.dts"
 )
-OVERLAY_TARGETS=(
-  "/boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo"
-  "/boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo"
-)
 
 usage() {
   cat <<'USAGE'
@@ -121,7 +117,8 @@ check_dtc_compile() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   for src in "${OVERLAY_SOURCES[@]}"; do
-    local out="$tmp/$(basename "$src" .dts).dtbo"
+    local out
+    out="$tmp/$(basename "$src" .dts).dtbo"
     if ! dtc -@ -I dts -O dtb -o "$out" "$src"; then
       die "Device-tree overlay failed to compile: $src"
     fi
@@ -213,7 +210,7 @@ MSG
       exit 1
     fi
 
-    deb="$(ls rockpi-penta_*.deb 2>/dev/null | head -n1)"
+    deb="$(find . -maxdepth 1 -type f -name 'rockpi-penta_*.deb' -printf '%f\n' | sort | head -n1)"
     [[ -n "$deb" ]] || die "Downloaded rockpi-penta package not found"
     validate_deb_if_requested "$deb"
     run dpkg-deb -x "$deb" /
@@ -327,9 +324,17 @@ require_file "$BASE_DIR/oled.py"
 log "Creating backups in $BACKUP_DIR"
 run mkdir -p "$BACKUP_DIR" /boot/dtbo
 run cp -a "$EXTLINUX" "$BACKUP_DIR/extlinux.conf"
-[[ -e /etc/rockpi-penta.env ]] && run cp -a /etc/rockpi-penta.env "$BACKUP_DIR/rockpi-penta.env" || true
-[[ -e "$BASE_DIR/fan.py" ]] && run cp -a "$BASE_DIR/fan.py" "$BACKUP_DIR/fan.py" || true
-[[ -e "$BASE_DIR/oled.py" ]] && run cp -a "$BASE_DIR/oled.py" "$BACKUP_DIR/oled.py" || true
+if [[ -e /etc/rockpi-penta.env ]]; then
+  run cp -a /etc/rockpi-penta.env "$BACKUP_DIR/rockpi-penta.env"
+fi
+
+if [[ -e "$BASE_DIR/fan.py" ]]; then
+  run cp -a "$BASE_DIR/fan.py" "$BACKUP_DIR/fan.py"
+fi
+
+if [[ -e "$BASE_DIR/oled.py" ]]; then
+  run cp -a "$BASE_DIR/oled.py" "$BACKUP_DIR/oled.py"
+fi
 
 pip_install_requirements "$BASE_DIR/requirements.txt"
 pip_install adafruit-extended-bus adafruit_extended_bus

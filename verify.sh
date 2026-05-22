@@ -41,7 +41,11 @@ check_env_value() {
 
 info "System"
 arch="$(uname -m 2>/dev/null || true)"
-[[ "$arch" == "aarch64" ]] && ok "Architecture is aarch64" || warn "Architecture is '$arch', expected aarch64"
+if [[ "$arch" == "aarch64" ]]; then
+  ok "Architecture is aarch64"
+else
+  warn "Architecture is '$arch', expected aarch64"
+fi
 
 model="$(read_dt_string /proc/device-tree/model)"
 if [[ "$model" == *"Cubie A7A"* ]]; then
@@ -53,14 +57,30 @@ fi
 info "Boot overlays"
 check_file_contains /boot/extlinux/extlinux.conf "cubie-a7a-spwm0-4-pin13.dtbo" "Fan PWM overlay listed in extlinux.conf"
 check_file_contains /boot/extlinux/extlinux.conf "cubie-a7a-twi7-pin3-5.dtbo" "TWI7/OLED overlay listed in extlinux.conf"
-[[ -f /boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo ]] && ok "Fan PWM .dtbo exists" || fail "Fan PWM .dtbo missing"
-[[ -f /boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo ]] && ok "TWI7/OLED .dtbo exists" || fail "TWI7/OLED .dtbo missing"
+if [[ -f /boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo ]]; then
+  ok "Fan PWM .dtbo exists"
+else
+  fail "Fan PWM .dtbo missing"
+fi
+if [[ -f /boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo ]]; then
+  ok "TWI7/OLED .dtbo exists"
+else
+  fail "TWI7/OLED .dtbo missing"
+fi
 
 info "Device tree runtime state"
 twi7_status="$(read_dt_string /sys/firmware/devicetree/base/soc@3000000/twi@2517000/status)"
-[[ "$twi7_status" == "okay" ]] && ok "TWI7 status is okay" || fail "TWI7 status is '${twi7_status:-missing}'"
+if [[ "$twi7_status" == "okay" ]]; then
+  ok "TWI7 status is okay"
+else
+  fail "TWI7 status is '${twi7_status:-missing}'"
+fi
 spwm_status="$(read_dt_string /sys/firmware/devicetree/base/soc@3000000/s_pwm0@7023014/status)"
-[[ "$spwm_status" == "okay" ]] && ok "S-PWM0-4 status is okay" || fail "S-PWM0-4 status is '${spwm_status:-missing}'"
+if [[ "$spwm_status" == "okay" ]]; then
+  ok "S-PWM0-4 status is okay"
+else
+  fail "S-PWM0-4 status is '${spwm_status:-missing}'"
+fi
 
 info "I2C / OLED"
 i2c_bus=""
@@ -89,7 +109,11 @@ else
 fi
 
 info "PWM / fan"
-[[ -d /sys/class/pwm/pwmchip20 ]] && ok "pwmchip20 exists" || fail "pwmchip20 missing"
+if [[ -d /sys/class/pwm/pwmchip20 ]]; then
+  ok "pwmchip20 exists"
+else
+  fail "pwmchip20 missing"
+fi
 if [[ -d /sys/class/pwm/pwmchip20/pwm4 ]]; then
   ok "pwmchip20/pwm4 is exported"
   period="$(cat /sys/class/pwm/pwmchip20/pwm4/period 2>/dev/null || true)"
