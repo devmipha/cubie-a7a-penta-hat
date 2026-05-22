@@ -129,6 +129,32 @@ else
   warn "pwmchip20/pwm4 is not exported yet. It is usually exported after rockpi-penta.service starts."
 fi
 
+
+info "Drive temperatures"
+drive_count=0
+hottest_milli=0
+
+for hwmon in /sys/class/hwmon/hwmon*; do
+  [[ -e "$hwmon/name" ]] || continue
+  [[ "$(cat "$hwmon/name" 2>/dev/null)" == "drivetemp" ]] || continue
+  [[ -e "$hwmon/temp1_input" ]] || continue
+
+  temp_milli="$(cat "$hwmon/temp1_input" 2>/dev/null || true)"
+  [[ "$temp_milli" =~ ^[0-9]+$ ]] || continue
+
+  drive_count=$((drive_count + 1))
+  if (( temp_milli > hottest_milli )); then
+    hottest_milli="$temp_milli"
+  fi
+done
+
+if (( drive_count > 0 )); then
+  hottest_c=$((hottest_milli / 1000))
+  ok "drivetemp exposes ${drive_count} drive temperature sensor(s), hottest ${hottest_c}C"
+else
+  warn "No drivetemp drive temperature sensor found; fan control will use CPU temperature only"
+fi
+
 info "Configuration"
 check_env_value HARDWARE_PWM 1
 check_env_value PWMCHIP 20

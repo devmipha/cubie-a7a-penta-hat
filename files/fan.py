@@ -1,146 +1,211 @@
-#!/usr/bin/env python3
-"""Patched rockpi-penta fan controller for Radxa Cubie A7A.
+#!/usr/bin/python3
+"""PWM fan control for the Cubie A7A Penta SATA HAT.
 
-Adds support for non-zero PWM channels and sysfs polarity configuration.
-The tested Cubie A7A + Penta SATA HAT mapping uses pwmchip20/pwm4.
+The fan speed is controlled by the highest requested cooling level from:
+- CPU/SoC temperature
+- hottest SATA drive temperature exposed via the kernel drivetemp hwmon driver
+
+Drive temperatures are discovered automatically by scanning:
+  /sys/class/hwmon/hwmon*/name == "drivetemp"
 """
+
+from __future__ import annotations
+
 import logging
 import os
-import os.path
-import threading
 import time
-import traceback
+from pathlib import Path
 
-try:
-    import gpiod
-except Exception:
-    gpiod = None
 
-import misc
+logging.basicConfig(
+    level=logging.INFO,
+    format="rockpi-penta fan: %(levelname)s: %(message)s",
+)
 
-logging.basicConfig(level=logging.INFO, format="rockpi-penta-fan: %(levelname)s: %(message)s")
 
-pin = None
-VALID_POLARITIES = {"normal", "inversed"}
+def env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        logging.warning("Invalid integer for %s=%r, using %d", name, os.environ.get(name), default)
+        return default
 
 
 class Pwm:
-    def __init__(self, chip, channel=0, polarity=None):
-        self.period_value = None
+    def __init__(self) -> None:
+        self.chip = env_int("PWMCHIP", 20)
+        self.channel = env_int("PWM_CHANNEL", 4)
+        self.period_ns = env_int("PWM_PERIOD_US", 40) * 1000
+        self.polarity = os.environ.get("PWM_POLARITY", "inversed").strip()
+
+        if self.polarity not in {"normal", "inversed"}:
+            logging.warning("Invalid PWM_POLARITY=%r, using 'inversed'", self.polarity)
+            self.polarity = "inversed"
+
+        self.chip_path = Path(f"/sys/class/pwm/pwmchip{self.chip}")
+        self.path = self.chip_path / f"pwm{self.channel}"
+
+        self._export()
+        self._configure()
+
+    def _write(self, name: str, value: str | int) -> None:
+        (self.path / name).write_text(str(value), encoding="ascii")
+
+    def _export(self) -> None:
+        if self.path.exists():
+            return
+
+        logging.info("Exporting pwmchip%d/pwm%d", self.chip, self.channel)
+        (self.chip_path / "export").write_text(str(self.channel), encoding="ascii")
+
+        for _ in range(20):
+            if self.path.exists():
+                return
+            time.sleep(0.05)
+
+        raise RuntimeError(f"PWM path did not appear: {self.path}")
+
+    def _configure(self) -> None:
         try:
-            int(chip)
-            chip = f"pwmchip{chip}"
-        except ValueError:
+            self._write("enable", 0)
+        except OSError:
             pass
 
-        self.chip_path = f"/sys/class/pwm/{chip}"
-        self.channel = int(channel)
-        self.filepath = f"{self.chip_path}/pwm{self.channel}/"
+        try:
+            self._write("polarity", self.polarity)
+        except OSError:
+            logging.exception("Could not set PWM polarity to %s", self.polarity)
+
+        self._write("period", self.period_ns)
+        self.set_speed_percent(0)
+        self._write("enable", 1)
+
+    def set_speed_percent(self, speed: int) -> None:
+        speed = max(0, min(100, int(speed)))
+
+        if self.polarity == "inversed":
+            duty = round(self.period_ns * (100 - speed) / 100)
+        else:
+            duty = round(self.period_ns * speed / 100)
+
+        duty = max(0, min(self.period_ns, duty))
+        self._write("duty_cycle", duty)
+
+
+def read_temp_file(path: Path) -> float | None:
+    try:
+        milli_c = int(path.read_text(encoding="ascii").strip())
+        return milli_c / 1000.0
+    except Exception:
+        return None
+
+
+def get_cpu_temp_c() -> float | None:
+    temps: list[float] = []
+
+    for zone in Path("/sys/class/thermal").glob("thermal_zone*"):
+        temp = read_temp_file(zone / "temp")
+        if temp is not None:
+            temps.append(temp)
+
+    return max(temps) if temps else None
+
+
+def get_drive_temps_hwmon() -> list[float]:
+    temps: list[float] = []
+
+    for hwmon in Path("/sys/class/hwmon").glob("hwmon*"):
+        name_file = hwmon / "name"
+        temp_file = hwmon / "temp1_input"
 
         try:
-            if not os.path.isdir(self.filepath):
-                with open(f"{self.chip_path}/export", "w", encoding="ascii") as f:
-                    f.write(str(self.channel))
-                time.sleep(0.2)
-        except OSError:
-            logging.warning("init pwm error")
-            traceback.print_exc()
+            if name_file.read_text(encoding="ascii").strip() != "drivetemp":
+                continue
+        except Exception:
+            continue
 
-        if polarity:
-            if polarity not in VALID_POLARITIES:
-                logging.warning("invalid PWM_POLARITY=%r; expected one of %s", polarity, sorted(VALID_POLARITIES))
-            else:
-                try:
-                    self.enable(False)
-                    with open(os.path.join(self.filepath, "polarity"), "w", encoding="ascii") as f:
-                        f.write(str(polarity))
-                except OSError:
-                    logging.warning("setting pwm polarity failed")
-                    traceback.print_exc()
+        temp = read_temp_file(temp_file)
+        if temp is not None:
+            temps.append(temp)
 
-    def period(self, ns: int):
-        self.period_value = ns
-        with open(os.path.join(self.filepath, "period"), "w", encoding="ascii") as f:
-            f.write(str(ns))
-
-    def period_us(self, us: int):
-        self.period(us * 1000)
-
-    def enable(self, t: bool):
-        with open(os.path.join(self.filepath, "enable"), "w", encoding="ascii") as f:
-            f.write(f"{int(t)}")
-
-    def write(self, duty: float):
-        assert self.period_value, "The Period is not set."
-        duty = max(0.0, min(1.0, float(duty)))
-        with open(os.path.join(self.filepath, "duty_cycle"), "w", encoding="ascii") as f:
-            f.write(f"{int(self.period_value * duty)}")
+    return temps
 
 
-class Gpio:
-    def tr(self):
-        while True:
-            self.line.set_value(1)
-            time.sleep(self.value[0])
-            self.line.set_value(0)
-            time.sleep(self.value[1])
-
-    def __init__(self, period_s):
-        if gpiod is None:
-            raise RuntimeError("python gpiod module is not available")
-        self.line = gpiod.Chip(os.environ["FAN_CHIP"]).get_line(int(os.environ["FAN_LINE"]))
-        self.line.request(consumer="fan", type=gpiod.LINE_REQ_DIR_OUT)
-        self.value = [period_s / 2, period_s / 2]
-        self.period_s = period_s
-        self.thread = threading.Thread(target=self.tr, daemon=True)
-        self.thread.start()
-
-    def write(self, duty):
-        self.value[1] = duty * self.period_s
-        self.value[0] = self.period_s - self.value[1]
+_drive_cache_ts = 0.0
+_drive_cache: list[float] = []
 
 
-def read_temp():
-    with open("/sys/class/thermal/thermal_zone0/temp", encoding="ascii") as f:
-        return int(f.read().strip()) / 1000.0
+def get_cached_drive_temps() -> list[float]:
+    global _drive_cache_ts, _drive_cache
+
+    interval = max(1, env_int("FAN_DRIVE_INTERVAL", 10))
+    now = time.monotonic()
+
+    if now - _drive_cache_ts >= interval:
+        _drive_cache = get_drive_temps_hwmon()
+        _drive_cache_ts = now
+
+    return _drive_cache
 
 
-def get_dc(cache={}):
-    if misc.conf["run"].value == 0:
-        return 0.999
+def temp_to_speed(temp_c: float, prefix: str) -> int:
+    lv0 = env_int(f"{prefix}_LV0", 35)
+    lv1 = env_int(f"{prefix}_LV1", 45)
+    lv2 = env_int(f"{prefix}_LV2", 60)
+    lv3 = env_int(f"{prefix}_LV3", 75)
 
-    if time.time() - cache.get("time", 0) > 60:
-        cache["time"] = time.time()
-        cache["dc"] = misc.fan_temp2dc(read_temp())
-
-    return cache["dc"]
-
-
-def change_dc(dc, cache={}):
-    if dc != cache.get("dc"):
-        cache["dc"] = dc
-        pin.write(dc)
+    if temp_c >= lv3:
+        return 100
+    if temp_c >= lv2:
+        return 75
+    if temp_c >= lv1:
+        return 50
+    if temp_c >= lv0:
+        return 25
+    return 0
 
 
-def running():
-    global pin
+def choose_fan_speed(cpu_temp: float | None, drive_temps: list[float]) -> int:
+    requested: list[int] = []
 
-    if os.environ["HARDWARE_PWM"] == "1":
-        chip = os.environ["PWMCHIP"]
-        channel = os.environ.get("PWM_CHANNEL", "0")
-        polarity = os.environ.get("PWM_POLARITY", "normal")
-        period_us = int(os.environ.get("PWM_PERIOD_US", "40"))
+    if env_bool("FAN_CPU_ENABLE", True) and cpu_temp is not None:
+        requested.append(temp_to_speed(cpu_temp, "FAN_CPU"))
 
-        pin = Pwm(chip, channel=channel, polarity=polarity)
-        pin.period_us(period_us)
-        pin.write(0.999)
-        pin.enable(True)
-    else:
-        pin = Gpio(0.025)
+    if env_bool("FAN_DRIVE_ENABLE", True) and drive_temps:
+        requested.append(temp_to_speed(max(drive_temps), "FAN_DRIVE"))
+
+    return max(requested) if requested else 0
+
+
+def running() -> None:
+    pwm = Pwm()
+    interval = max(1, env_int("FAN_INTERVAL", 2))
+    last_speed: int | None = None
 
     while True:
-        change_dc(get_dc())
-        time.sleep(1)
+        cpu_temp = get_cpu_temp_c()
+        drive_temps = get_cached_drive_temps()
+        speed = choose_fan_speed(cpu_temp, drive_temps)
+
+        try:
+            pwm.set_speed_percent(speed)
+        except Exception:
+            logging.exception("Failed to update fan PWM")
+
+        if speed != last_speed:
+            drive_text = f"{max(drive_temps):.1f}C" if drive_temps else "n/a"
+            cpu_text = f"{cpu_temp:.1f}C" if cpu_temp is not None else "n/a"
+            logging.info("fan=%d%% cpu=%s drive_max=%s", speed, cpu_text, drive_text)
+            last_speed = speed
+
+        time.sleep(interval)
 
 
 if __name__ == "__main__":

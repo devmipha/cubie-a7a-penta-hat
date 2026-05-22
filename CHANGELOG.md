@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+- Added automatic fan control based on the hottest SATA drive temperature via the kernel `drivetemp` hwmon driver.
+- Fan speed now follows the maximum cooling request from CPU and drive temperature thresholds.
+- Installer now enables `drivetemp` at boot.
+- `verify.sh` now reports detected drive temperature sensors.
+
 ## 0.3.0
 - Made the installer self-contained.
 - Removed dependency on downloading or successfully configuring the upstream `rockpi-penta` package.

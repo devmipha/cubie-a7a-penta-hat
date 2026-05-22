@@ -111,6 +111,7 @@ remove_extlinux_overlays
 log "Removing installed files"
 run rm -rf "$BASE_DIR"
 run rm -f /etc/rockpi-penta.env
+run rm -f /etc/modules-load.d/cubie-a7a-penta-hat.conf
 
 if [[ "$PURGE" -eq 1 ]]; then
   run rm -f /etc/rockpi-penta.conf

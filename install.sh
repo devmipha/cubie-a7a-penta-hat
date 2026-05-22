@@ -252,6 +252,18 @@ values = {
     "OLED_HEIGHT": "32",
     "BUTTON_CHIP": "0",
     "BUTTON_LINE": "33",
+    "FAN_INTERVAL": "2",
+    "FAN_CPU_ENABLE": "1",
+    "FAN_DRIVE_ENABLE": "1",
+    "FAN_DRIVE_INTERVAL": "10",
+    "FAN_CPU_LV0": "35",
+    "FAN_CPU_LV1": "45",
+    "FAN_CPU_LV2": "60",
+    "FAN_CPU_LV3": "75",
+    "FAN_DRIVE_LV0": "35",
+    "FAN_DRIVE_LV1": "45",
+    "FAN_DRIVE_LV2": "55",
+    "FAN_DRIVE_LV3": "65",
 }
 
 seen = set()
@@ -276,6 +288,22 @@ for key, value in values.items():
 
 path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 PY_UPDATE_ENV
+}
+
+
+enable_drivetemp() {
+  log "Enabling drive temperature monitoring via drivetemp"
+
+  run mkdir -p /etc/modules-load.d
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    printf 'drivetemp\n' > /etc/modules-load.d/cubie-a7a-penta-hat.conf
+    if ! modprobe drivetemp; then
+      warn "Could not load drivetemp now; it may load after reboot when drives are available."
+    fi
+  else
+    log "Would write /etc/modules-load.d/cubie-a7a-penta-hat.conf"
+  fi
 }
 
 install_fonts() {
@@ -314,6 +342,8 @@ run apt-get install -y \
   python3-pil \
   python3-libgpiod \
   fonts-dejavu-core
+
+enable_drivetemp
 
 log "Creating backups in $BACKUP_DIR"
 run mkdir -p "$BACKUP_DIR" /boot/dtbo "$BASE_DIR"
