@@ -1,0 +1,24 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y device-tree-compiler shellcheck
+      - name: Shell syntax
+        run: bash -n install.sh uninstall.sh verify.sh
+      - name: ShellCheck
+        run: shellcheck install.sh uninstall.sh verify.sh
+      - name: Python compile
+        run: python3 -m py_compile files/fan.py files/oled.py
+      - name: Device tree overlays compile
+        run: |
+          for f in overlays/*.dts; do
+            dtc -@ -I dts -O dtb -o "/tmp/$(basename "$f" .dts).dtbo" "$f"
+          done

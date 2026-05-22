@@ -1,50 +1,101 @@
-# Troubleshooting / Fehlerdiagnose
+# Fehlerdiagnose
 
-[English](troubleshooting.md) | Deutsch
+Starte zuerst das Diagnose-Skript:
 
-## I2C/OLED
+```bash
+sudo ./verify.sh
+```
 
-Erwartung:
+Bitte die vollständige Ausgabe in Issues einfügen.
+
+## Boot-Overlays
+
+Extlinux prüfen:
+
+```bash
+grep -nE 'fdtoverlays|spwm|twi7|dtbo' /boot/extlinux/extlinux.conf
+```
+
+Erwartete Overlays:
+
+```text
+/boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo
+/boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo
+```
+
+Runtime-Device-Tree prüfen:
+
+```bash
+tr -d '\0' < /sys/firmware/devicetree/base/soc@3000000/twi@2517000/status
+tr -d '\0' < /sys/firmware/devicetree/base/soc@3000000/s_pwm0@7023014/status
+```
+
+Erwartet: jeweils `okay`.
+
+## OLED / I2C
+
+I2C-Adapter anzeigen:
+
+```bash
+for d in /sys/class/i2c-dev/i2c-*; do
+  [ -e "$d" ] || continue
+  bus="${d##*/i2c-}"
+  echo "--- i2c-$bus ---"
+  readlink -f "$d/device"
+  cat "$d/name" 2>/dev/null || true
+done
+```
+
+Erwartet: Ein Adapter zeigt auf `2517000.twi`; meist ist das `/dev/i2c-7`.
+
+OLED-Bus scannen:
 
 ```bash
 sudo /usr/sbin/i2cdetect -y 7
 ```
 
-Dort sollte `0x3c` erscheinen.
+Erwartet: `0x3c`.
 
-Wenn Bus 7 nicht existiert, prüfe, ob das TWI7-Overlay geladen wurde:
+Bekannte Nicht-OLED-Busse im getesteten System:
+
+- `i2c-15` bei `0x3e`: `sunxi-ac101b` Audio-Codec
+- `i2c-20`: HDMI-DDC, nicht das Top-Board-OLED
+
+Wenn `2517000.twi` existiert, aber kein I2C-Adapter erscheint:
 
 ```bash
-grep -nE 'fdtoverlays|twi7' /boot/extlinux/extlinux.conf
-tr -d '\0' < /sys/firmware/devicetree/base/soc@3000000/twi@2517000/status
+sudo dmesg -T | grep -Ei '2517000|twi7|sunxi-twi'
 ```
 
-Wenn `2517000.twi` auf `okay` steht, aber kein `/dev/i2c-*` erscheint, prüfe das Treiber-Probe-Log:
+Bei `failed to get clock frequency` muss das TWI7-Overlay enthalten:
 
-```bash
-sudo dmesg -T | grep -Ei '2517000|twi7|failed to get clock frequency|sunxi-twi' | tail -80
+```dts
+clock-frequency = <100000>;
 ```
 
-Das TWI7-Overlay muss `clock-frequency = <100000>;` setzen. Ohne diese Property kann der BSP-Treiber mit `failed to get clock frequency` abbrechen.
+## Lüfter-PWM
 
-Wenn das Display geteilt aussieht oder scrollt, ist im OLED-Controller wahrscheinlich noch Hardware-Scroll aktiv. Die gepatchte `oled.py` sendet:
+Erwarteter Pfad nach Start des Services:
 
-- `0x2E` Scroll deaktivieren
-- `0xA6` Normaldarstellung
-- `0xA4` Anzeige folgt RAM-Inhalt
+```text
+/sys/class/pwm/pwmchip20/pwm4
+```
 
-## Fan PWM
-
-Erwarteter PWM-Kanal:
+Debug:
 
 ```bash
-sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
 sudo cat /sys/kernel/debug/pwm | sed -n '/7023000.pwm/,+14p'
 ```
 
-Erwartung: `pwm-4` ist auf `platform/7023000.pwm` aktiv.
+Erwartet: `pwm-4` aktiv auf `platform/7023000.pwm`.
 
-Die Umgebung sollte enthalten:
+Konfiguration:
+
+```bash
+cat /etc/rockpi-penta.env
+```
+
+Erwartet:
 
 ```text
 PWMCHIP=20
@@ -53,17 +104,24 @@ PWM_POLARITY=inversed
 PWM_PERIOD_US=40
 ```
 
-Die sysfs-Werte für PWM-Polarität sind normalerweise `normal` oder `inversed`. Wenn dein Kernel `inversed` ablehnt, prüfe:
+`PWM_PERIOD_US=40` bedeutet 40 Mikrosekunden Periodendauer, also 25 kHz.
+
+## Service-Logs
 
 ```bash
-sudo journalctl -u rockpi-penta.service -b --no-pager | grep -i polarity
+systemctl status rockpi-penta.service --no-pager
+sudo journalctl -u rockpi-penta.service -b --no-pager | tail -120
 ```
 
-## Stromversorgung
+## Display scrollt oder wirkt geteilt
 
-Den Cubie nicht gleichzeitig per USB-C und über den HAT-Stromeingang versorgen, wenn die 5-V-Schienen über den 40-Pin-Header verbunden sind. Nur eine Stromquelle bzw. eine eindeutige Stromtopologie verwenden.
+Der OLED-Controller kann einen Hardware-Scroll-Zustand behalten, solange er versorgt wird. Dieser Patch sendet `0x2E`, `0xA6` und `0xA4` beim Initialisieren und vor dem Rendern. Wenn das Display trotzdem geteilt wirkt, Service stoppen und den HAT komplett stromlos machen.
 
-## Bekannte Nicht-OLED-Busse
+## Rollback
 
-- `i2c-20` ist HDMI-DDC, nicht das OLED.
-- `i2c-15@0x3e` ist der `sunxi-ac101b` Audio-Codec, nicht das OLED.
+```bash
+sudo ./uninstall.sh
+sudo reboot
+```
+
+Backups liegen unter `/var/backups/cubie-a7a-penta-hat/`.

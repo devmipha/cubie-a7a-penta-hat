@@ -1,28 +1,34 @@
 # Changelog
 
+## 0.2.4
+
+- Added `verify.sh` for post-install diagnostics.
+- Added `install.sh --check`, `--dry-run`, `--verbose`, and `--force` modes.
+- Added prerequisite checks for overlay source files, Python syntax, extlinux, board model, and architecture.
+- Improved installer error messages around Device Tree overlay compilation.
+- Added optional upstream `.deb` checksum validation via `ROCKPI_PENTA_DEB_SHA256`.
+- Added `config.example.env` documenting all supported environment values.
+- Added `.gitignore`, `.editorconfig`, `.shellcheckrc`, `Makefile`, GitHub issue template, and static-check workflow.
+- Expanded English and German README files with Quick Start, requirements, verification, FAQ, and maintainer checks.
+- Expanded troubleshooting documentation in English and German.
+- Improved uninstall script with explicit backup selection and backup validation.
+
 ## 0.2.3
 
-- Clarify installation flow: do not require a normal upstream `rockpi-penta` install on Cubie A7A.
-- Installer now uses existing upstream base files when present, otherwise attempts to download and extract the upstream `.deb` without running its unsupported-board `postinst`.
-- Installer installs upstream Python requirements when available before applying Cubie A7A patches.
+- Clarified that the official upstream `rockpi-penta` package should not be installed normally first on Cubie A7A.
+- Installer extracts upstream base files without running upstream `postinst` when needed.
 
 ## 0.2.2
 
-- Added bilingual documentation:
-  - `README.md` / `README.de.md`
-  - `docs/pinout.md` / `docs/pinout.de.md`
-  - `docs/troubleshooting.md` / `docs/troubleshooting.de.md`
-- Confirmed `fan.py` uses logging and does not require `sys`.
-- Confirmed `/proc/meminfo` is opened with `encoding="ascii"` in `oled.py`.
-- Kept the tested OLED layout and SSD1306 hardware-scroll reset sequence.
+- Added bilingual documentation.
+- Added consistency fixes in Python file handling.
 
 ## 0.2.1
 
-- Added robust PWM polarity handling.
-- Made OLED fan-speed display use `PWMCHIP` and `PWM_CHANNEL` from `/etc/rockpi-penta.env`.
-- Improved installer checks and PEP-668 pip fallback.
-- Added prominent power/backfeeding warnings.
+- Improved Python robustness for fan and OLED patches.
+- Added README power warning and troubleshooting notes.
 
 ## 0.2.0
 
-- Initial package with overlays, installer, patched `fan.py`, patched `oled.py`, and English documentation.
+- Added patched fan and OLED support for Cubie A7A + Penta SATA HAT.
+- Added Device Tree overlays for S-PWM0-4 and TWI7.

@@ -1,0 +1,38 @@
+name: Bug report
+about: Report an installation, fan, OLED, or overlay issue
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue. Please include the diagnostic output below; it makes hardware issues much easier to debug.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem description
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: verify.sh output
+      description: Run `sudo ./verify.sh` and paste the full output.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: system
+    attributes:
+      label: System information
+      description: Paste `uname -a`, `/etc/os-release`, and `/boot/extlinux/extlinux.conf` overlay lines.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: wiring
+    attributes:
+      label: Wiring / photos
+      description: Describe power topology and wiring. Photos are very helpful.
+    validations:
+      required: false

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Patched rockpi-penta fan controller for Radxa Cubie A7A.
+
+Adds support for non-zero PWM channels and sysfs polarity configuration.
+The tested Cubie A7A + Penta SATA HAT mapping uses pwmchip20/pwm4.
+"""
 import logging
 import os
 import os.path

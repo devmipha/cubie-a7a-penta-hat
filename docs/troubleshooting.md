@@ -1,50 +1,101 @@
 # Troubleshooting
 
-English | [Deutsch](troubleshooting.de.md)
+Run the bundled verifier first:
 
-## I2C/OLED
+```bash
+sudo ./verify.sh
+```
 
-Expected:
+Include the full output when opening an issue.
+
+## Boot overlays
+
+Check extlinux:
+
+```bash
+grep -nE 'fdtoverlays|spwm|twi7|dtbo' /boot/extlinux/extlinux.conf
+```
+
+Expected overlays:
+
+```text
+/boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo
+/boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo
+```
+
+Check runtime Device Tree:
+
+```bash
+tr -d '\0' < /sys/firmware/devicetree/base/soc@3000000/twi@2517000/status
+tr -d '\0' < /sys/firmware/devicetree/base/soc@3000000/s_pwm0@7023014/status
+```
+
+Expected: `okay` for both.
+
+## OLED / I2C
+
+List I2C adapters:
+
+```bash
+for d in /sys/class/i2c-dev/i2c-*; do
+  [ -e "$d" ] || continue
+  bus="${d##*/i2c-}"
+  echo "--- i2c-$bus ---"
+  readlink -f "$d/device"
+  cat "$d/name" 2>/dev/null || true
+done
+```
+
+Expected: one adapter points to `2517000.twi`; it is usually `/dev/i2c-7`.
+
+Scan the OLED bus:
 
 ```bash
 sudo /usr/sbin/i2cdetect -y 7
 ```
 
-Should show `0x3c`.
+Expected: `0x3c`.
 
-If bus 7 does not exist, check that the TWI7 overlay is loaded:
+Known non-OLED buses on the tested system:
 
-```bash
-grep -nE 'fdtoverlays|twi7' /boot/extlinux/extlinux.conf
-tr -d '\0' < /sys/firmware/devicetree/base/soc@3000000/twi@2517000/status
-```
+- `i2c-15` at `0x3e`: `sunxi-ac101b` audio codec
+- `i2c-20`: HDMI DDC, not the top-board OLED
 
-If `2517000.twi` is `okay` but no `/dev/i2c-*` appears, check the driver probe log:
+If `2517000.twi` exists but no I2C adapter appears, check dmesg:
 
 ```bash
-sudo dmesg -T | grep -Ei '2517000|twi7|failed to get clock frequency|sunxi-twi' | tail -80
+sudo dmesg -T | grep -Ei '2517000|twi7|sunxi-twi'
 ```
 
-The TWI7 overlay must set `clock-frequency = <100000>;`. Without it, the BSP driver can fail with `failed to get clock frequency`.
+If you see `failed to get clock frequency`, ensure the TWI7 overlay contains:
 
-If the display looks split or scrolling, the OLED controller still has hardware scroll enabled. The patched `oled.py` sends:
-
-- `0x2E` deactivate scroll
-- `0xA6` normal display
-- `0xA4` display follows RAM
+```dts
+clock-frequency = <100000>;
+```
 
 ## Fan PWM
 
-Expected PWM channel:
+Expected path after the service starts:
+
+```text
+/sys/class/pwm/pwmchip20/pwm4
+```
+
+Debug:
 
 ```bash
-sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
 sudo cat /sys/kernel/debug/pwm | sed -n '/7023000.pwm/,+14p'
 ```
 
 Expected: `pwm-4` active on `platform/7023000.pwm`.
 
-The environment should contain:
+Configuration:
+
+```bash
+cat /etc/rockpi-penta.env
+```
+
+Expected:
 
 ```text
 PWMCHIP=20
@@ -53,17 +104,24 @@ PWM_POLARITY=inversed
 PWM_PERIOD_US=40
 ```
 
-The sysfs PWM polarity values are normally `normal` or `inversed`. If your kernel rejects `inversed`, check:
+`PWM_PERIOD_US=40` means a 40 microsecond period, or 25 kHz.
+
+## Service logs
 
 ```bash
-sudo journalctl -u rockpi-penta.service -b --no-pager | grep -i polarity
+systemctl status rockpi-penta.service --no-pager
+sudo journalctl -u rockpi-penta.service -b --no-pager | tail -120
 ```
 
-## Power
+## Display scrolls or looks split
 
-Do not power the Cubie through USB-C and the HAT power input at the same time if their 5 V rails are connected through the 40-pin header. Use one power source/topology only.
+The OLED controller can retain a hardware-scroll state while powered. This patch sends `0x2E`, `0xA6`, and `0xA4` during initialization and before rendering. If the screen still looks split, stop the service and power-cycle the HAT completely.
 
-## Known non-target buses
+## Rollback
 
-- `i2c-20` is HDMI DDC, not the OLED.
-- `i2c-15@0x3e` is the `sunxi-ac101b` audio codec, not the OLED.
+```bash
+sudo ./uninstall.sh
+sudo reboot
+```
+
+Backups are stored in `/var/backups/cubie-a7a-penta-hat/`.

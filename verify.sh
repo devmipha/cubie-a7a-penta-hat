@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -u
+
+OK=0
+WARN=0
+FAIL=0
+SUDO=""
+[[ ${EUID:-$(id -u)} -eq 0 ]] || SUDO="sudo"
+
+ok() { echo "[ OK ] $*"; OK=$((OK + 1)); }
+warn() { echo "[WARN] $*"; WARN=$((WARN + 1)); }
+fail() { echo "[FAIL] $*"; FAIL=$((FAIL + 1)); }
+info() { echo "[INFO] $*"; }
+
+read_dt_string() {
+  local path="$1"
+  tr -d '\0' < "$path" 2>/dev/null || true
+}
+
+check_file_contains() {
+  local file="$1" pattern="$2" label="$3"
+  if [[ -f "$file" ]] && grep -q -- "$pattern" "$file"; then
+    ok "$label"
+  else
+    fail "$label"
+  fi
+}
+
+check_env_value() {
+  local key="$1" expected="$2" file="/etc/rockpi-penta.env"
+  local value=""
+  if [[ -f "$file" ]]; then
+    value="$(awk -F= -v k="$key" '$1 == k {v=$2} END {print v}' "$file")"
+  fi
+  if [[ "$value" == "$expected" ]]; then
+    ok "$key=$expected"
+  else
+    fail "$key expected '$expected', got '${value:-missing}'"
+  fi
+}
+
+info "System"
+arch="$(uname -m 2>/dev/null || true)"
+[[ "$arch" == "aarch64" ]] && ok "Architecture is aarch64" || warn "Architecture is '$arch', expected aarch64"
+
+model="$(read_dt_string /proc/device-tree/model)"
+if [[ "$model" == *"Cubie A7A"* ]]; then
+  ok "Device-tree model: $model"
+else
+  warn "Device-tree model is '${model:-unknown}', expected Cubie A7A"
+fi
+
+info "Boot overlays"
+check_file_contains /boot/extlinux/extlinux.conf "cubie-a7a-spwm0-4-pin13.dtbo" "Fan PWM overlay listed in extlinux.conf"
+check_file_contains /boot/extlinux/extlinux.conf "cubie-a7a-twi7-pin3-5.dtbo" "TWI7/OLED overlay listed in extlinux.conf"
+[[ -f /boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo ]] && ok "Fan PWM .dtbo exists" || fail "Fan PWM .dtbo missing"
+[[ -f /boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo ]] && ok "TWI7/OLED .dtbo exists" || fail "TWI7/OLED .dtbo missing"
+
+info "Device tree runtime state"
+twi7_status="$(read_dt_string /sys/firmware/devicetree/base/soc@3000000/twi@2517000/status)"
+[[ "$twi7_status" == "okay" ]] && ok "TWI7 status is okay" || fail "TWI7 status is '${twi7_status:-missing}'"
+spwm_status="$(read_dt_string /sys/firmware/devicetree/base/soc@3000000/s_pwm0@7023014/status)"
+[[ "$spwm_status" == "okay" ]] && ok "S-PWM0-4 status is okay" || fail "S-PWM0-4 status is '${spwm_status:-missing}'"
+
+info "I2C / OLED"
+i2c_bus=""
+for d in /sys/class/i2c-dev/i2c-*; do
+  [[ -e "$d" ]] || continue
+  if readlink -f "$d/device" | grep -q '2517000.twi'; then
+    i2c_bus="${d##*/i2c-}"
+    break
+  fi
+done
+
+if [[ -n "$i2c_bus" ]]; then
+  ok "TWI7 registered as /dev/i2c-$i2c_bus"
+  if command -v /usr/sbin/i2cdetect >/dev/null 2>&1; then
+    scan="$($SUDO /usr/sbin/i2cdetect -y "$i2c_bus" 2>/dev/null || true)"
+    if echo "$scan" | grep -Eq '(^|[[:space:]])3c([[:space:]]|$)'; then
+      ok "OLED detected at 0x3c on i2c-$i2c_bus"
+    else
+      warn "OLED 0x3c not visible on i2c-$i2c_bus. Check power, SDA/SCL, reset, and HAT wiring."
+    fi
+  else
+    warn "i2cdetect not installed; cannot scan OLED address"
+  fi
+else
+  fail "No /dev/i2c-* adapter points to 2517000.twi"
+fi
+
+info "PWM / fan"
+[[ -d /sys/class/pwm/pwmchip20 ]] && ok "pwmchip20 exists" || fail "pwmchip20 missing"
+if [[ -d /sys/class/pwm/pwmchip20/pwm4 ]]; then
+  ok "pwmchip20/pwm4 is exported"
+  period="$(cat /sys/class/pwm/pwmchip20/pwm4/period 2>/dev/null || true)"
+  duty="$(cat /sys/class/pwm/pwmchip20/pwm4/duty_cycle 2>/dev/null || true)"
+  polarity="$(cat /sys/class/pwm/pwmchip20/pwm4/polarity 2>/dev/null || true)"
+  info "pwm4 period=${period:-?} duty=${duty:-?} polarity=${polarity:-?}"
+else
+  warn "pwmchip20/pwm4 is not exported yet. It is usually exported after rockpi-penta.service starts."
+fi
+
+info "Configuration"
+check_env_value HARDWARE_PWM 1
+check_env_value PWMCHIP 20
+check_env_value PWM_CHANNEL 4
+check_env_value PWM_POLARITY inversed
+check_env_value PWM_PERIOD_US 40
+check_env_value I2C_BUS 7
+check_env_value OLED_ADDR 0x3c
+
+info "Service"
+if systemctl is-active --quiet rockpi-penta.service; then
+  ok "rockpi-penta.service is active"
+else
+  fail "rockpi-penta.service is not active"
+  systemctl status rockpi-penta.service --no-pager 2>/dev/null || true
+fi
+
+printf '\nSummary: %d OK, %d warnings, %d failures\n' "$OK" "$WARN" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

@@ -1,4 +1,9 @@
 #!/usr/bin/python3
+"""Patched rockpi-penta OLED renderer for Radxa Cubie A7A.
+
+Uses direct Linux I2C bus access instead of Adafruit Blinka board detection.
+The tested top-board OLED is on TWI7 (/dev/i2c-7) at address 0x3c.
+"""
 import os
 import socket
 import subprocess
