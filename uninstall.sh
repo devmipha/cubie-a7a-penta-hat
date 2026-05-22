@@ -1,63 +1,134 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BACKUP_ROOT="/var/backups/cubie-a7a-penta-hat"
 BASE_DIR="/usr/bin/rockpi-penta"
 EXTLINUX="/boot/extlinux/extlinux.conf"
 
-if [[ $EUID -ne 0 ]]; then
-  echo "Please run as root: sudo ./uninstall.sh" >&2
-  exit 1
-fi
+DRY_RUN=0
+VERBOSE=0
+PURGE=0
 
-latest_backup() {
-  find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n1
+usage() {
+  cat <<'USAGE'
+Usage: sudo ./uninstall.sh [options]
+
+Options:
+  --dry-run         Show intended actions without changing the system.
+  -v, --verbose     Print commands before running them.
+  --purge           Also remove /etc/rockpi-penta.conf.
+  -h, --help        Show this help.
+USAGE
 }
 
-BACKUP_DIR="${1:-$(latest_backup)}"
-if [[ -z "${BACKUP_DIR:-}" || ! -d "$BACKUP_DIR" ]]; then
-  cat >&2 <<MSG
-No backup directory found.
-Expected backups under: $BACKUP_ROOT
-You may pass a backup directory explicitly:
-  sudo ./uninstall.sh /var/backups/cubie-a7a-penta-hat/YYYYmmdd-HHMMSS
-MSG
-  exit 1
-fi
+log() { echo "[uninstall] $*"; }
+warn() { echo "[uninstall] WARNING: $*" >&2; }
+die() { echo "[uninstall] ERROR: $*" >&2; exit 1; }
 
-echo "Using backup: $BACKUP_DIR"
+run() {
+  if [[ "$VERBOSE" -eq 1 || "$DRY_RUN" -eq 1 ]]; then
+    printf '[uninstall] +'
+    printf ' %q' "$@"
+    printf '\n'
+  fi
 
-if [[ -f "$BACKUP_DIR/extlinux.conf" ]]; then
-  cp -a "$BACKUP_DIR/extlinux.conf" "$EXTLINUX"
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    "$@"
+  fi
+}
+
+require_root() {
+  if [[ "$EUID" -ne 0 ]]; then
+    die "Please run as root: sudo ./uninstall.sh"
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1 ;;
+    -v|--verbose) VERBOSE=1 ;;
+    --purge) PURGE=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown option: $1" ;;
+  esac
+  shift
+done
+
+remove_extlinux_overlays() {
+  if [[ ! -f "$EXTLINUX" ]]; then
+    warn "$EXTLINUX not found; skipping boot overlay cleanup"
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    log "Would remove Penta-HAT overlays from $EXTLINUX"
+    return 0
+  fi
+
+  python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/boot/extlinux/extlinux.conf")
+text = path.read_text(encoding="utf-8")
+
+remove = {
+    "/boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo",
+    "/boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo",
+}
+
+out = []
+for line in text.splitlines():
+    stripped = line.strip()
+
+    if stripped.startswith("fdtoverlays"):
+        indent = line[:len(line) - len(line.lstrip())]
+        parts = stripped.split()
+        overlays = [item for item in parts[1:] if item not in remove]
+
+        if overlays:
+            out.append(indent + "fdtoverlays " + " ".join(overlays))
+        continue
+
+    out.append(line)
+
+path.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+}
+
+require_root
+
+log "Stopping and disabling service"
+run systemctl disable --now rockpi-penta.service 2>/dev/null || true
+
+log "Removing systemd unit"
+run rm -f /lib/systemd/system/rockpi-penta.service
+run rm -f /etc/systemd/system/multi-user.target.wants/rockpi-penta.service
+run systemctl daemon-reload
+run systemctl reset-failed rockpi-penta.service 2>/dev/null || true
+
+log "Removing boot overlay entries"
+remove_extlinux_overlays
+
+log "Removing installed files"
+run rm -rf "$BASE_DIR"
+run rm -f /etc/rockpi-penta.env
+
+if [[ "$PURGE" -eq 1 ]]; then
+  run rm -f /etc/rockpi-penta.conf
 else
-  echo "Warning: no extlinux.conf backup found; leaving $EXTLINUX unchanged" >&2
+  log "Keeping /etc/rockpi-penta.conf if present. Use --purge to remove it."
 fi
 
-if [[ -f "$BACKUP_DIR/rockpi-penta.env" ]]; then
-  cp -a "$BACKUP_DIR/rockpi-penta.env" /etc/rockpi-penta.env
-else
-  echo "Warning: no rockpi-penta.env backup found; leaving current env file unchanged" >&2
-fi
-
-if [[ -f "$BACKUP_DIR/fan.py" ]]; then
-  cp -a "$BACKUP_DIR/fan.py" "$BASE_DIR/fan.py"
-else
-  echo "Warning: no fan.py backup found; leaving current file unchanged" >&2
-fi
-
-if [[ -f "$BACKUP_DIR/oled.py" ]]; then
-  cp -a "$BACKUP_DIR/oled.py" "$BASE_DIR/oled.py"
-else
-  echo "Warning: no oled.py backup found; leaving current file unchanged" >&2
-fi
-
-systemctl daemon-reload
-systemctl restart rockpi-penta.service || true
+log "Removing installed device-tree overlay binaries"
+run rm -f /boot/dtbo/cubie-a7a-spwm0-4-pin13.dtbo
+run rm -f /boot/dtbo/cubie-a7a-twi7-pin3-5.dtbo
 
 cat <<MSG
 
-Uninstall/rollback completed from:
-  $BACKUP_DIR
+Uninstalled Cubie A7A Penta HAT patch.
 
-A reboot is recommended if device-tree overlays changed.
+Recommended next step:
+  sudo reboot
+
+Note:
+  This does not remove unrelated overlays such as cubie-a7a-disable-broken-usb.dtbo.
 MSG
