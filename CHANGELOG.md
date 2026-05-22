@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.7
+- Fix installer extlinux validation
+
 ## 0.2.6
 - Fixed Cubie A7A board detection by checking `/proc/device-tree/compatible` for `radxa,cubie-a7a`.
 

@@ -105,6 +105,23 @@ check_overlay_sources() {
   done
 }
 
+validate_extlinux() {
+  require_file "$EXTLINUX"
+
+  python3 - <<'PY_EXTLINUX'
+from pathlib import Path
+
+path = Path("/boot/extlinux/extlinux.conf")
+text = path.read_text(encoding="utf-8")
+
+if not any(line.strip().startswith(("fdtoverlays", "fdtdir")) for line in text.splitlines()):
+    raise SystemExit(
+        "Could not find fdtdir/fdtoverlays in /boot/extlinux/extlinux.conf; "
+        "aborting before changes"
+    )
+PY_EXTLINUX
+}
+
 check_python_files() {
   require_file "$ROOT_DIR/files/fan.py"
   require_file "$ROOT_DIR/files/oled.py"
