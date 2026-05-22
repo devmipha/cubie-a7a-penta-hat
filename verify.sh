@@ -47,11 +47,16 @@ else
   warn "Architecture is '$arch', expected aarch64"
 fi
 
-model="$(read_dt_string /proc/device-tree/model)"
-if [[ "$model" == *"Cubie A7A"* ]]; then
-  ok "Device-tree model: $model"
+model="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+compatible="$(tr '\0' ' ' < /proc/device-tree/compatible 2>/dev/null || true)"
+board_id="$model $compatible"
+
+if [[ "$board_id" == *"Cubie A7A"* \
+   || "$board_id" == *"cubie-a7a"* \
+   || "$board_id" == *"radxa,cubie-a7a"* ]]; then
+  ok "Device-tree compatible identifies Radxa Cubie A7A"
 else
-  warn "Device-tree model is '${model:-unknown}', expected Cubie A7A"
+  warn "Device-tree does not clearly identify Cubie A7A: model='$model', compatible='$compatible'"
 fi
 
 info "Boot overlays"
