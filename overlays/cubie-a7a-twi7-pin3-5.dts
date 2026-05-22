@@ -1,0 +1,32 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target-path = "/soc@3000000/pinctrl@2000000";
+        __overlay__ {
+            twi7_oled_pins_active: twi7-oled-pins-active {
+                pins = "PJ22", "PJ23";
+                function = "twi7";
+                drive-strength = <0x0a>;
+                bias-pull-up;
+            };
+
+            twi7_oled_pins_sleep: twi7-oled-pins-sleep {
+                pins = "PJ22", "PJ23";
+                function = "gpio_in";
+            };
+        };
+    };
+
+    fragment@1 {
+        target-path = "/soc@3000000/twi@2517000";
+        __overlay__ {
+            pinctrl-names = "default", "sleep";
+            pinctrl-0 = <&twi7_oled_pins_active>;
+            pinctrl-1 = <&twi7_oled_pins_sleep>;
+            clock-frequency = <100000>;
+            status = "okay";
+        };
+    };
+};

@@ -1,0 +1,31 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target-path = "/soc@3000000/pinctrl@7025000";
+        __overlay__ {
+            spwm0_4_pin13_active: s-pwm0-4-pin13-active {
+                pins = "PL6";
+                function = "s_pwm0_4";
+                drive-strength = <0x0a>;
+            };
+
+            spwm0_4_pin13_sleep: s-pwm0-4-pin13-sleep {
+                pins = "PL6";
+                function = "gpio_in";
+                bias-pull-down;
+            };
+        };
+    };
+
+    fragment@1 {
+        target-path = "/soc@3000000/s_pwm0@7023014";
+        __overlay__ {
+            pinctrl-names = "active", "sleep";
+            pinctrl-0 = <&spwm0_4_pin13_active>;
+            pinctrl-1 = <&spwm0_4_pin13_sleep>;
+            status = "okay";
+        };
+    };
+};
