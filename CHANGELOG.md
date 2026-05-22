@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.5
+- Fixed static checks for GitHub Workflows
+
 ## 0.2.4
 
 - Added `verify.sh` for post-install diagnostics.
