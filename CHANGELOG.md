@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.6
+- Fixed Cubie A7A board detection by checking `/proc/device-tree/compatible` for `radxa,cubie-a7a`.
+
 ## 0.2.5
 - Fixed GitHub Actions static checks.
 - Updated workflow checkout action to avoid Node.js 20 deprecation warnings.

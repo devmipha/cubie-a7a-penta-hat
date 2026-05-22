@@ -72,7 +72,8 @@ command_exists() {
 }
 
 check_arch_and_board() {
-  local arch model
+  local arch model compatible id
+
   arch="$(uname -m || true)"
   if [[ "$arch" != "aarch64" && "$FORCE" -ne 1 ]]; then
     die "Expected aarch64, got '$arch'. Use --force to continue anyway."
@@ -81,22 +82,21 @@ check_arch_and_board() {
   fi
 
   model="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
-  if [[ -n "$model" && "$model" != *"Cubie A7A"* && "$FORCE" -ne 1 ]]; then
-    die "This does not look like a Radxa Cubie A7A: '$model'. Use --force to continue."
-  elif [[ -n "$model" && "$model" != *"Cubie A7A"* ]]; then
-    warn "Device-tree model is '$model'; continuing due to --force."
-  fi
-}
+  compatible="$(tr '\0' ' ' < /proc/device-tree/compatible 2>/dev/null || true)"
+  id="$model $compatible"
 
-validate_extlinux() {
-  require_file "$EXTLINUX"
-  python3 - <<'PY'
-from pathlib import Path
-path = Path('/boot/extlinux/extlinux.conf')
-text = path.read_text(encoding='utf-8')
-if not any(line.strip().startswith(('fdtoverlays', 'fdtdir')) for line in text.splitlines()):
-    raise SystemExit('Could not find fdtdir/fdtoverlays in /boot/extlinux/extlinux.conf; aborting before changes')
-PY
+  if [[ "$id" == *"Cubie A7A"* \
+     || "$id" == *"cubie-a7a"* \
+     || "$id" == *"radxa,cubie-a7a"* ]]; then
+    return 0
+  fi
+
+  if [[ "$FORCE" -eq 1 ]]; then
+    warn "This does not look like a Radxa Cubie A7A: model='$model', compatible='$compatible'; continuing due to --force."
+    return 0
+  fi
+
+  die "This does not look like a Radxa Cubie A7A: model='$model', compatible='$compatible'. Use --force to continue."
 }
 
 check_overlay_sources() {
